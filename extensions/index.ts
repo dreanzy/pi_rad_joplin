@@ -1,0 +1,447 @@
+/**
+ * Joplin Extension for pi
+ *
+ * Read/write Joplin notes via the Web Clipper REST API — no MCP needed.
+ *
+ * Requirements:
+ *   - Joplin desktop must be running
+ *   - JOPLIN_TOKEN env var (Joplin Settings → Web Clipper → Copy Token)
+ *   - Optional JOPLIN_BASE_URL (default http://localhost:41184)
+ *
+ * Install: save to ~/.pi/agent/extensions/index.ts, then /reload
+ */
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+// 配置
+// ---------------------------------------------------------------------------
+
+function getBaseUrl(): string {
+	return process.env.JOPLIN_BASE_URL || "http://localhost:41184";
+}
+
+function getToken(): string | undefined {
+	if (process.env.JOPLIN_TOKEN) return process.env.JOPLIN_TOKEN;
+	// Fallback: read from Joplin desktop settings.json
+	try {
+		const fs = require("node:fs");
+		const path = require("node:path");
+		const os = require("node:os");
+		const candidates = [
+			path.join(os.homedir(), ".config", "joplin-desktop", "settings.json"),
+			path.join(process.env.APPDATA || "", "joplin-desktop", "settings.json"),
+		];
+		for (const settingsPath of candidates) {
+			if (fs.existsSync(settingsPath)) {
+				const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+				const tok = settings["api.token"];
+				if (tok) return tok;
+			}
+		}
+	} catch {
+		/* silent fallback */
+	}
+	return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP wrapper
+// ---------------------------------------------------------------------------
+// HTTP 封装
+// ---------------------------------------------------------------------------
+
+async function joplinApi(
+	method: string,
+	apiPath: string,
+	body?: object,
+): Promise<any> {
+	const baseUrl = getBaseUrl();
+	const token = getToken();
+	if (!token) {
+		throw new Error(
+			"JOPLIN_TOKEN not set. Add to shell config: export JOPLIN_TOKEN=your-token\n" +
+				"Get it from: Joplin → Settings → Web Clipper → Copy Token",
+		);
+	}
+
+	const url = new URL(apiPath, baseUrl);
+	url.searchParams.set("token", token);
+
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json; charset=utf-8",
+	};
+	const opts: any = { method, headers };
+	if (body && (method === "POST" || method === "PUT")) {
+		opts.body = JSON.stringify(body);
+	}
+
+	const ctrl = new AbortController();
+	const timer = setTimeout(() => ctrl.abort(), 30_000);
+	opts.signal = ctrl.signal;
+
+	try {
+		const res = await fetch(url.toString(), opts);
+		if (!res.ok) {
+			const errText = await res.text().catch(() => "");
+			throw new Error(`Joplin API ${res.status}: ${errText}`);
+		}
+		const txt = await res.text();
+		clearTimeout(timer);
+		// /ping returns plain text "JoplinClipperServer", other endpoints return JSON
+		if (!txt) return { ok: true };
+		try {
+			return JSON.parse(txt);
+		} catch {
+			return { text: txt, ok: true };
+		}
+	} catch (err: any) {
+		clearTimeout(timer);
+		if (err.name === "AbortError") throw new Error("Joplin API timeout (30s)");
+		if (err?.cause?.code === "ECONNREFUSED")
+			throw new Error("Cannot connect to Joplin. Is it running?");
+		throw err;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------
+// 格式化
+// ---------------------------------------------------------------------------
+
+function fmtMeta(n: any, i: number): string {
+	const prefix = n.is_todo ? "☐" : "📄";
+	const date = n.updated_time
+		? new Date(n.updated_time).toLocaleString("zh-CN")
+		: "N/A";
+	return `${i + 1}. ${prefix} **${n.title || "(untitled)"}** \`${n.id}\`\n   📅 ${date}`;
+}
+
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
+// 工具函数
+// ---------------------------------------------------------------------------
+
+async function listFolders() {
+	const data = await joplinApi("GET", "/folders");
+	const items: any[] = data.items || [];
+	if (!items.length) return "No notebooks found.";
+	return items.map((f, i) => `${i + 1}. **${f.title}** \`${f.id}\``).join("\n");
+}
+
+async function listNotes(folderId?: string, limit = 30, page?: number) {
+	const p = new URLSearchParams();
+	if (folderId) p.set("folder_id", folderId);
+	p.set("limit", String(limit));
+	if (page) p.set("page", String(page));
+	p.set("fields", "id,title,updated_time,is_todo");
+
+	const data = await joplinApi("GET", `/notes?${p}`);
+	const items: any[] = data.items || [];
+	if (!items.length)
+		return folderId ? "No notes in this folder." : "No notes found.";
+	const lines = items.map(fmtMeta);
+	if (data.has_more) lines.push(`\n> More pages (currently page ${page || 1})`);
+	return lines.join("\n");
+}
+
+async function getNote(noteId: string) {
+	const data = await joplinApi(
+		"GET",
+		`/notes/${noteId}?fields=title,body,updated_time,source_url,is_todo`,
+	);
+	const date = data.updated_time
+		? new Date(data.updated_time).toLocaleString("zh-CN")
+		: null;
+	return [
+		`## ${data.is_todo ? "☐" : "📄"} ${data.title || "(untitled)"}`,
+		...(date ? [`📅 ${date}`] : []),
+		...(data.source_url ? [`🔗 ${data.source_url}`] : []),
+		`🆔 \`${data.id}\``,
+		"",
+		"---",
+		"",
+		data.body || "(empty)",
+	].join("\n");
+}
+
+async function createNote(params: {
+	title: string;
+	body?: string;
+	parent_id?: string;
+	is_todo?: boolean;
+}) {
+	const b: any = { title: params.title };
+	if (params.body) b.body = params.body;
+	if (params.parent_id) b.parent_id = params.parent_id;
+	if (params.is_todo !== undefined) b.is_todo = params.is_todo ? 1 : 0;
+	const data = await joplinApi("POST", "/notes", b);
+	return `✅ Created: **${data.title}** — ID: \`${data.id}\``;
+}
+
+async function updateNote(params: {
+	note_id: string;
+	title?: string;
+	body?: string;
+	parent_id?: string;
+	is_todo?: boolean;
+}) {
+	const b: any = {};
+	if (params.title !== undefined) b.title = params.title;
+	if (params.body !== undefined) b.body = params.body;
+	if (params.parent_id !== undefined) b.parent_id = params.parent_id;
+	if (params.is_todo !== undefined) b.is_todo = params.is_todo ? 1 : 0;
+	if (!Object.keys(b).length) return "⚠️ No fields to update.";
+	const data = await joplinApi("PUT", `/notes/${params.note_id}`, b);
+	return `✅ Updated: **${data.title}** — ID: \`${data.id}\``;
+}
+
+async function deleteNote(noteId: string) {
+	await joplinApi("DELETE", `/notes/${noteId}`);
+	return `✅ Note \`${noteId}\` deleted.`;
+}
+
+async function searchNotes(query: string, type = "note") {
+	const data = await joplinApi(
+		"GET",
+		`/search?query=${encodeURIComponent(query)}&type=${type}`,
+	);
+	const items: any[] = data.items || [];
+	if (!items.length) return `No results for "${query}".`;
+	return items.map(fmtMeta).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Extension registration
+// ---------------------------------------------------------------------------
+// Extension 注册
+// ---------------------------------------------------------------------------
+
+export default function (pi: ExtensionAPI) {
+	// Connection check on session start
+	pi.on("session_start", async (_event, ctx) => {
+		const token = getToken();
+		if (!token) {
+			ctx.ui.notify("⚠️ Joplin: JOPLIN_TOKEN not set", "warning");
+			return;
+		}
+		try {
+			await joplinApi("GET", "/ping");
+			ctx.ui.notify("📓 Joplin connected", "info");
+		} catch (err: any) {
+			ctx.ui.notify(`⚠️ Joplin: ${err.message}`, "warning");
+		}
+	});
+
+	// ---- joplin_list_folders ----
+	pi.registerTool({
+		name: "joplin_list_folders",
+		label: "Joplin List Notebooks",
+		description: "List all Joplin notebooks (folders) with names and IDs.",
+		promptSnippet: "List all Joplin notebooks",
+		promptGuidelines: [
+			"Use joplin_list_folders when the user wants to see Joplin notebooks",
+			"Use returned folder IDs with joplin_list_notes to filter notes by notebook",
+		],
+		parameters: Type.Object({}),
+		async execute() {
+			return {
+				content: [{ type: "text", text: await listFolders() }],
+				details: {},
+			};
+		},
+	});
+
+	// ---- joplin_list_notes ----
+	pi.registerTool({
+		name: "joplin_list_notes",
+		label: "Joplin List Notes",
+		description: "List Joplin notes. Filter by folder_id, supports pagination.",
+		promptSnippet: "List Joplin notes",
+		promptGuidelines: [
+			"Use joplin_list_notes to browse notes",
+			"If user mentions a notebook name, get folder_id from joplin_list_folders first",
+		],
+		parameters: Type.Object({
+			folder_id: Type.Optional(
+				Type.String({ description: "Notebook ID to filter by" }),
+			),
+			limit: Type.Optional(
+				Type.Number({ description: "Notes per page (default 30)" }),
+			),
+			page: Type.Optional(Type.Number({ description: "Page number, 1-based" })),
+		}),
+		async execute(_id, params) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: await listNotes(params.folder_id, params.limit, params.page),
+					},
+				],
+				details: {},
+			};
+		},
+	});
+
+	// ---- joplin_get_note ----
+	pi.registerTool({
+		name: "joplin_get_note",
+		label: "Joplin Get Note",
+		description: "Read a Joplin note's full content (title + body) by ID.",
+		promptSnippet: "Read a Joplin note by ID",
+		promptGuidelines: [
+			"Use joplin_get_note to read note content",
+			"Note ID comes from joplin_list_notes or joplin_search results",
+		],
+		parameters: Type.Object({
+			note_id: Type.String({ description: "Note ID" }),
+		}),
+		async execute(_id, params) {
+			return {
+				content: [{ type: "text", text: await getNote(params.note_id) }],
+				details: {},
+			};
+		},
+	});
+
+	// ---- joplin_create_note ----
+	pi.registerTool({
+		name: "joplin_create_note",
+		label: "Joplin Create Note",
+		description: "Create a new note in Joplin. Body supports Markdown.",
+		promptSnippet: "Create a new Joplin note",
+		promptGuidelines: [
+			"Use joplin_create_note when the user wants to save/lock content into Joplin",
+			"Body supports Markdown format",
+			"Get parent_id from joplin_list_folders if targeting a specific notebook",
+		],
+		parameters: Type.Object({
+			title: Type.String({ description: "Note title" }),
+			body: Type.Optional(Type.String({ description: "Note body (Markdown)" })),
+			parent_id: Type.Optional(
+				Type.String({ description: "Target notebook ID (optional)" }),
+			),
+			is_todo: Type.Optional(
+				Type.Boolean({ description: "Create as to-do item (default false)" }),
+			),
+		}),
+		async execute(_id, params) {
+			return {
+				content: [{ type: "text", text: await createNote(params) }],
+				details: {},
+			};
+		},
+	});
+
+	// ---- joplin_update_note ----
+	pi.registerTool({
+		name: "joplin_update_note",
+		label: "Joplin Update Note",
+		description:
+			"Update title, body, or notebook of an existing note. Only pass changed fields.",
+		promptSnippet: "Update a Joplin note",
+		promptGuidelines: [
+			"Use joplin_update_note to modify existing notes",
+			"Only pass the fields that need to change — omitted fields stay as-is",
+		],
+		parameters: Type.Object({
+			note_id: Type.String({ description: "Note ID to update" }),
+			title: Type.Optional(
+				Type.String({ description: "New title (optional)" }),
+			),
+			body: Type.Optional(
+				Type.String({ description: "New body in Markdown (optional)" }),
+			),
+			parent_id: Type.Optional(
+				Type.String({ description: "Move to this notebook ID (optional)" }),
+			),
+			is_todo: Type.Optional(
+				Type.Boolean({ description: "Toggle to-do flag (optional)" }),
+			),
+		}),
+		async execute(_id, params) {
+			return {
+				content: [{ type: "text", text: await updateNote(params) }],
+				details: {},
+			};
+		},
+	});
+
+	// ---- joplin_delete_note ----
+	pi.registerTool({
+		name: "joplin_delete_note",
+		label: "Joplin Delete Note",
+		description:
+			"⚠️ Permanently delete a Joplin note (no recycle bin). Always confirm with user first.",
+		promptSnippet: "Delete a Joplin note — confirm first!",
+		promptGuidelines: [
+			"⚠️ joplin_delete_note is IRREVERSIBLE. Always confirm with user before calling!",
+			"Only use when the user explicitly requests deletion of a specific note",
+		],
+		parameters: Type.Object({
+			note_id: Type.String({ description: "Note ID to delete" }),
+		}),
+		async execute(_id, params) {
+			return {
+				content: [{ type: "text", text: await deleteNote(params.note_id) }],
+				details: {},
+			};
+		},
+	});
+
+	// ---- joplin_search ----
+	pi.registerTool({
+		name: "joplin_search",
+		label: "Joplin Search",
+		description:
+			"Full-text search across all Joplin notes. Returns matching titles and IDs.",
+		promptSnippet: "Full-text search in Joplin",
+		promptGuidelines: [
+			"Use joplin_search for keyword-based search in Joplin",
+			"Pass resulting note IDs to joplin_get_note to read full content",
+		],
+		parameters: Type.Object({
+			query: Type.String({ description: "Search keyword(s)" }),
+			type: Type.Optional(
+				Type.String({
+					description: "Search type: 'note' (default), 'folder', or 'tag'",
+				}),
+			),
+		}),
+		async execute(_id, params) {
+			return {
+				content: [
+					{ type: "text", text: await searchNotes(params.query, params.type) },
+				],
+				details: {},
+			};
+		},
+	});
+
+	// ---- /joplin command ----
+	pi.registerCommand("joplin", {
+		description: "Check Joplin connection status",
+		handler: async (_args, ctx) => {
+			const token = getToken();
+			if (!token) {
+				ctx.ui.notify(
+					"❌ JOPLIN_TOKEN not set. Add: export JOPLIN_TOKEN=...",
+					"error",
+				);
+				return;
+			}
+			try {
+				await joplinApi("GET", "/ping");
+				ctx.ui.notify(`✅ Joplin connected — ${getBaseUrl()}`, "info");
+			} catch (err: any) {
+				ctx.ui.notify(`❌ ${err.message}`, "error");
+			}
+		},
+	});
+}
