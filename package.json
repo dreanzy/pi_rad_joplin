@@ -21,7 +21,7 @@
     "ci": "npm run typecheck && npm test"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=18.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

@@ -17,7 +17,6 @@ import { Type } from "typebox";
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-// 配置
 // ---------------------------------------------------------------------------
 
 function getBaseUrl(): string {
@@ -25,33 +24,12 @@ function getBaseUrl(): string {
 }
 
 function getToken(): string | undefined {
-	if (process.env.JOPLIN_TOKEN) return process.env.JOPLIN_TOKEN;
-	// Fallback: read from Joplin desktop settings.json
-	try {
-		const fs = require("node:fs");
-		const path = require("node:path");
-		const os = require("node:os");
-		const candidates = [
-			path.join(os.homedir(), ".config", "joplin-desktop", "settings.json"),
-			path.join(process.env.APPDATA || "", "joplin-desktop", "settings.json"),
-		];
-		for (const settingsPath of candidates) {
-			if (fs.existsSync(settingsPath)) {
-				const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-				const tok = settings["api.token"];
-				if (tok) return tok;
-			}
-		}
-	} catch {
-		/* silent fallback */
-	}
-	return undefined;
+	return process.env.JOPLIN_TOKEN;
 }
 
 // ---------------------------------------------------------------------------
 // HTTP wrapper
 // ---------------------------------------------------------------------------
-// HTTP 封装
 // ---------------------------------------------------------------------------
 
 async function joplinApi(
@@ -110,7 +88,6 @@ async function joplinApi(
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
-// 格式化
 // ---------------------------------------------------------------------------
 
 function fmtMeta(n: any, i: number): string {
@@ -124,7 +101,6 @@ function fmtMeta(n: any, i: number): string {
 // ---------------------------------------------------------------------------
 // Utility functions
 // ---------------------------------------------------------------------------
-// 工具函数
 // ---------------------------------------------------------------------------
 
 async function listFolders() {
@@ -219,7 +195,6 @@ async function searchNotes(query: string, type = "note") {
 // ---------------------------------------------------------------------------
 // Extension registration
 // ---------------------------------------------------------------------------
-// Extension 注册
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
