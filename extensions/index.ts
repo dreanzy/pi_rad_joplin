@@ -11,8 +11,9 @@
  * Install: save to ~/.pi/agent/extensions/index.ts, then /reload
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Text } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -213,6 +214,36 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
+	/** Truncate tool output for TUI, expand with Ctrl+O. */
+	function makeRenderResult(maxLines = 10) {
+		return (
+			result: any,
+			{ expanded, isPartial }: { expanded: boolean; isPartial: boolean },
+			theme: any,
+		) => {
+			if (isPartial) {
+				return new Text(theme.fg("warning", "Processing..."), 0, 0);
+			}
+			const text =
+				result.content[0]?.type === "text" ? result.content[0].text : "";
+			if (expanded) {
+				return new Text(text, 0, 0);
+			}
+			const lines = text.split("\n");
+			if (lines.length <= maxLines) {
+				return new Text(text, 0, 0);
+			}
+			const truncated = lines.slice(0, maxLines).join("\n");
+			const remaining = lines.length - maxLines;
+			const hint = keyHint("app.tools.expand", "expand");
+			return new Text(
+				`${truncated}\n${theme.fg("dim", `... ${remaining} more lines (${hint})`)}`,
+				0,
+				0,
+			);
+		};
+	}
+
 	// ---- joplin_list_folders ----
 	pi.registerTool({
 		name: "joplin_list_folders",
@@ -230,6 +261,7 @@ export default function (pi: ExtensionAPI) {
 				details: {},
 			};
 		},
+		renderResult: makeRenderResult(10),
 	});
 
 	// ---- joplin_list_notes ----
@@ -262,6 +294,7 @@ export default function (pi: ExtensionAPI) {
 				details: {},
 			};
 		},
+		renderResult: makeRenderResult(10),
 	});
 
 	// ---- joplin_get_note ----
@@ -283,6 +316,7 @@ export default function (pi: ExtensionAPI) {
 				details: {},
 			};
 		},
+		renderResult: makeRenderResult(15),
 	});
 
 	// ---- joplin_create_note ----
@@ -397,6 +431,7 @@ export default function (pi: ExtensionAPI) {
 				details: {},
 			};
 		},
+		renderResult: makeRenderResult(10),
 	});
 
 	// ---- /joplin command ----
