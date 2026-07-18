@@ -1,14 +1,6 @@
 /**
- * Joplin Extension for pi
- *
- * Read/write Joplin notes via the Web Clipper REST API — no MCP needed.
- *
- * Requirements:
- *   - Joplin desktop must be running
- *   - JOPLIN_TOKEN env var (Joplin Settings → Web Clipper → Copy Token)
- *   - Optional JOPLIN_BASE_URL (default http://localhost:41184)
- *
- * Install: save to ~/.pi/agent/extensions/index.ts, then /reload
+ * Joplin Extension for pi — Web Clipper REST API.
+ * Requires JOPLIN_TOKEN. Save to ~/.pi/agent/extensions/index.ts, then /reload.
  */
 
 import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -183,6 +175,8 @@ async function searchNotes(query: string, type = "note") {
 // --- Extension registration
 
 export default function (pi: ExtensionAPI) {
+
+const ok = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 	// Connection check on session start
 	pi.on("session_start", async (_event, ctx) => {
 		const token = getToken();
@@ -235,15 +229,11 @@ export default function (pi: ExtensionAPI) {
 		description: "List all Joplin notebooks (folders) with names and IDs.",
 		promptSnippet: "List all Joplin notebooks",
 		promptGuidelines: [
-			"Use joplin_list_folders when the user wants to see Joplin notebooks",
 			"Use returned folder IDs with joplin_list_notes to filter notes by notebook",
 		],
 		parameters: Type.Object({}),
 		async execute() {
-			return {
-				content: [{ type: "text", text: await listFolders() }],
-				details: {},
-			};
+			return ok(await listFolders());
 		},
 		renderResult: makeRenderResult(10),
 	});
@@ -255,7 +245,6 @@ export default function (pi: ExtensionAPI) {
 		description: "List Joplin notes. Filter by folder_id, supports pagination.",
 		promptSnippet: "List Joplin notes",
 		promptGuidelines: [
-			"Use joplin_list_notes to browse notes",
 			"If user mentions a notebook name, get folder_id from joplin_list_folders first",
 		],
 		parameters: Type.Object({
@@ -268,15 +257,7 @@ export default function (pi: ExtensionAPI) {
 			page: Type.Optional(Type.Number({ description: "Page number, 1-based" })),
 		}),
 		async execute(_id, params) {
-			return {
-				content: [
-					{
-						type: "text",
-						text: await listNotes(params.folder_id, params.limit, params.page),
-					},
-				],
-				details: {},
-			};
+			return ok(await listNotes(params.folder_id, params.limit, params.page));
 		},
 		renderResult: makeRenderResult(10),
 	});
@@ -288,17 +269,13 @@ export default function (pi: ExtensionAPI) {
 		description: "Read a Joplin note's full content (title + body) by ID.",
 		promptSnippet: "Read a Joplin note by ID",
 		promptGuidelines: [
-			"Use joplin_get_note to read note content",
 			"Note ID comes from joplin_list_notes or joplin_search results",
 		],
 		parameters: Type.Object({
 			note_id: Type.String({ description: "Note ID" }),
 		}),
 		async execute(_id, params) {
-			return {
-				content: [{ type: "text", text: await getNote(params.note_id) }],
-				details: {},
-			};
+			return ok(await getNote(params.note_id));
 		},
 		renderResult: makeRenderResult(15),
 	});
@@ -310,8 +287,6 @@ export default function (pi: ExtensionAPI) {
 		description: "Create a new note in Joplin. Body supports Markdown.",
 		promptSnippet: "Create a new Joplin note",
 		promptGuidelines: [
-			"Use joplin_create_note when the user wants to save/lock content into Joplin",
-			"Body supports Markdown format",
 			"Get parent_id from joplin_list_folders if targeting a specific notebook",
 		],
 		parameters: Type.Object({
@@ -325,10 +300,7 @@ export default function (pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_id, params) {
-			return {
-				content: [{ type: "text", text: await createNote(params) }],
-				details: {},
-			};
+			return ok(await createNote(params));
 		},
 	});
 
@@ -337,12 +309,9 @@ export default function (pi: ExtensionAPI) {
 		name: "joplin_update_note",
 		label: "Joplin Update Note",
 		description:
-			"Update title, body, or notebook of an existing note. Only pass changed fields.",
+			"Update title, body, or notebook of an existing note. Only pass changed fields — omitted fields stay as-is.",
 		promptSnippet: "Update a Joplin note",
-		promptGuidelines: [
-			"Use joplin_update_note to modify existing notes",
-			"Only pass the fields that need to change — omitted fields stay as-is",
-		],
+		promptGuidelines: [],
 		parameters: Type.Object({
 			note_id: Type.String({ description: "Note ID to update" }),
 			title: Type.Optional(
@@ -359,10 +328,7 @@ export default function (pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_id, params) {
-			return {
-				content: [{ type: "text", text: await updateNote(params) }],
-				details: {},
-			};
+			return ok(await updateNote(params));
 		},
 	});
 
@@ -374,17 +340,13 @@ export default function (pi: ExtensionAPI) {
 			"⚠️ Permanently delete a Joplin note (no recycle bin). Always confirm with user first.",
 		promptSnippet: "Delete a Joplin note — confirm first!",
 		promptGuidelines: [
-			"⚠️ joplin_delete_note is IRREVERSIBLE. Always confirm with user before calling!",
-			"Only use when the user explicitly requests deletion of a specific note",
+			"⚠️ IRREVERSIBLE. Always confirm with user before calling!",
 		],
 		parameters: Type.Object({
 			note_id: Type.String({ description: "Note ID to delete" }),
 		}),
 		async execute(_id, params) {
-			return {
-				content: [{ type: "text", text: await deleteNote(params.note_id) }],
-				details: {},
-			};
+			return ok(await deleteNote(params.note_id));
 		},
 	});
 
@@ -396,7 +358,6 @@ export default function (pi: ExtensionAPI) {
 			"Full-text search across all Joplin notes. Returns matching titles and IDs.",
 		promptSnippet: "Full-text search in Joplin",
 		promptGuidelines: [
-			"Use joplin_search for keyword-based search in Joplin",
 			"Pass resulting note IDs to joplin_get_note to read full content",
 		],
 		parameters: Type.Object({
@@ -408,12 +369,7 @@ export default function (pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_id, params) {
-			return {
-				content: [
-					{ type: "text", text: await searchNotes(params.query, params.type) },
-				],
-				details: {},
-			};
+			return ok(await searchNotes(params.query, params.type));
 		},
 		renderResult: makeRenderResult(10),
 	});
