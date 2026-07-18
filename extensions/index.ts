@@ -15,10 +15,7 @@ import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
+// --- Config
 
 function getBaseUrl(): string {
 	return process.env.JOPLIN_BASE_URL || "http://localhost:41184";
@@ -28,10 +25,7 @@ function getToken(): string | undefined {
 	return process.env.JOPLIN_TOKEN;
 }
 
-// ---------------------------------------------------------------------------
-// HTTP wrapper
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
+// --- HTTP wrapper
 
 async function joplinApi(
 	method: string,
@@ -42,8 +36,7 @@ async function joplinApi(
 	const token = getToken();
 	if (!token) {
 		throw new Error(
-			"JOPLIN_TOKEN not set. Add to shell config: export JOPLIN_TOKEN=your-token\n" +
-				"Get it from: Joplin → Settings → Web Clipper → Copy Token",
+"JOPLIN_TOKEN not set — set JOPLIN_TOKEN in your shell config\nGet from: Joplin → Settings → Web Clipper → Copy Token",
 		);
 	}
 
@@ -86,23 +79,17 @@ async function joplinApi(
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Formatting
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
+// --- Formatting
 
 function fmtMeta(n: any, i: number): string {
 	const prefix = n.is_todo ? "☐" : "📄";
 	const date = n.updated_time
 		? new Date(n.updated_time).toLocaleString("zh-CN")
 		: "N/A";
-	return `${i + 1}. ${prefix} **${n.title || "(untitled)"}** \`${n.id}\`\n   📅 ${date}`;
+	return `${i + 1}. ${prefix} **${n.title}** \`${n.id}\`\n   📅 ${date}`;
 }
 
-// ---------------------------------------------------------------------------
-// Utility functions
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
+// --- Utility functions
 
 async function listFolders() {
 	const data = await joplinApi("GET", "/folders");
@@ -136,7 +123,7 @@ async function getNote(noteId: string) {
 		? new Date(data.updated_time).toLocaleString("zh-CN")
 		: null;
 	return [
-		`## ${data.is_todo ? "☐" : "📄"} ${data.title || "(untitled)"}`,
+		`## ${data.is_todo ? "☐" : "📄"} ${data.title}`,
 		...(date ? [`📅 ${date}`] : []),
 		...(data.source_url ? [`🔗 ${data.source_url}`] : []),
 		`🆔 \`${data.id}\``,
@@ -193,10 +180,7 @@ async function searchNotes(query: string, type = "note") {
 	return items.map(fmtMeta).join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Extension registration
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
+// --- Extension registration
 
 export default function (pi: ExtensionAPI) {
 	// Connection check on session start
