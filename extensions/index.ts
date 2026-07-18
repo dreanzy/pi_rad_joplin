@@ -117,7 +117,7 @@ async function listNotes(folderId?: string, limit = 30, page?: number) {
 async function getNote(noteId: string) {
 	const data = await joplinApi(
 		"GET",
-		`/notes/${noteId}?fields=title,body,updated_time,source_url,is_todo`,
+		`/notes/${noteId}?fields=id,title,body,updated_time,source_url,is_todo`,
 	);
 	const date = data.updated_time
 		? new Date(data.updated_time).toLocaleString("zh-CN")
