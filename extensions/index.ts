@@ -28,7 +28,7 @@ async function joplinApi(
 	const token = getToken();
 	if (!token) {
 		throw new Error(
-"JOPLIN_TOKEN not set — set JOPLIN_TOKEN in your shell config\nGet from: Joplin → Settings → Web Clipper → Copy Token",
+			"JOPLIN_TOKEN not set — set JOPLIN_TOKEN in your shell config\nGet from: Joplin → Settings → Web Clipper → Copy Token",
 		);
 	}
 
@@ -84,10 +84,19 @@ function fmtMeta(n: any, i: number): string {
 // --- Utility functions
 
 async function listFolders() {
-	const data = await joplinApi("GET", "/folders");
-	const items: any[] = data.items || [];
-	if (!items.length) return "No notebooks found.";
-	return items.map((f, i) => `${i + 1}. **${f.title}** \`${f.id}\``).join("\n");
+	const allItems: any[] = [];
+	let page = 1;
+	for (;;) {
+		const data = await joplinApi("GET", `/folders?limit=100&page=${page}`);
+		const items: any[] = data.items || [];
+		allItems.push(...items);
+		if (!data.has_more) break;
+		page++;
+	}
+	if (!allItems.length) return "No notebooks found.";
+	return allItems
+		.map((f, i) => `${i + 1}. **${f.title}** \`${f.id}\``)
+		.join("\n");
 }
 
 async function listNotes(folderId?: string, limit = 30, page?: number) {
@@ -175,8 +184,10 @@ async function searchNotes(query: string, type = "note") {
 // --- Extension registration
 
 export default function (pi: ExtensionAPI) {
-
-const ok = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+	const ok = (text: string) => ({
+		content: [{ type: "text" as const, text }],
+		details: {},
+	});
 	// Connection check on session start
 	pi.on("session_start", async (_event, ctx) => {
 		const token = getToken();
