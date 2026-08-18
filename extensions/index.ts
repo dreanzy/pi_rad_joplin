@@ -55,12 +55,11 @@ async function joplinApi(
 		}
 		const txt = await res.text();
 		clearTimeout(timer);
-		// /ping returns plain text "JoplinClipperServer", other endpoints return JSON
-		if (!txt) return { ok: true };
+		// /ping returns plain text, other endpoints return JSON; callers only use success/failure
 		try {
 			return JSON.parse(txt);
 		} catch {
-			return { text: txt, ok: true };
+			return txt;
 		}
 	} catch (err: any) {
 		clearTimeout(timer);
@@ -73,12 +72,13 @@ async function joplinApi(
 
 // --- Formatting
 
+function fmtDate(ts: number | undefined): string | null {
+	return ts ? new Date(ts).toLocaleString("zh-CN") : null;
+}
+
 function fmtMeta(n: any, i: number): string {
 	const prefix = n.is_todo ? "☐" : "📄";
-	const date = n.updated_time
-		? new Date(n.updated_time).toLocaleString("zh-CN")
-		: "N/A";
-	return `${i + 1}. ${prefix} **${n.title}** \`${n.id}\`\n   📅 ${date}`;
+	return `${i + 1}. ${prefix} **${n.title}** \`${n.id}\`\n   📅 ${fmtDate(n.updated_time) ?? "N/A"}`;
 }
 
 // --- Utility functions
@@ -120,9 +120,7 @@ async function getNote(noteId: string) {
 		"GET",
 		`/notes/${noteId}?fields=id,title,body,updated_time,source_url,is_todo`,
 	);
-	const date = data.updated_time
-		? new Date(data.updated_time).toLocaleString("zh-CN")
-		: null;
+	const date = fmtDate(data.updated_time);
 	return [
 		`## ${data.is_todo ? "☐" : "📄"} ${data.title}`,
 		...(date ? [`📅 ${date}`] : []),
@@ -188,19 +186,28 @@ export default function (pi: ExtensionAPI) {
 		content: [{ type: "text" as const, text }],
 		details: {},
 	});
-	// Connection check on session start
-	pi.on("session_start", async (_event, ctx) => {
+	async function checkConnection() {
 		const token = getToken();
-		if (!token) {
-			ctx.ui.notify("⚠️ Joplin: JOPLIN_TOKEN not set", "warning");
-			return;
-		}
+		if (!token)
+			return {
+				ok: false as const,
+				message: "JOPLIN_TOKEN not set. Add: export JOPLIN_TOKEN=...",
+			};
 		try {
 			await joplinApi("GET", "/ping");
-			ctx.ui.notify("📓 Joplin connected", "info");
+			return { ok: true as const, message: "Joplin connected" };
 		} catch (err: any) {
-			ctx.ui.notify(`⚠️ Joplin: ${err.message}`, "warning");
+			return { ok: false as const, message: err.message };
 		}
+	}
+
+	// Connection check on session start
+	pi.on("session_start", async (_event, ctx) => {
+		const r = await checkConnection();
+		ctx.ui.notify(
+			r.ok ? `📓 ${r.message}` : `⚠️ Joplin: ${r.message}`,
+			r.ok ? "info" : "warning",
+		);
 	});
 
 	/** Truncate tool output for TUI, expand with Ctrl+O. */
@@ -325,9 +332,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [],
 		parameters: Type.Object({
 			note_id: Type.String({ description: "Note ID to update" }),
-			title: Type.Optional(
-				Type.String({ description: "New title (optional)" }),
-			),
+			title: Type.Optional(Type.String({ description: "New title (optional)" })),
 			body: Type.Optional(
 				Type.String({ description: "New body in Markdown (optional)" }),
 			),
@@ -389,20 +394,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("joplin", {
 		description: "Check Joplin connection status",
 		handler: async (_args, ctx) => {
-			const token = getToken();
-			if (!token) {
-				ctx.ui.notify(
-					"❌ JOPLIN_TOKEN not set. Add: export JOPLIN_TOKEN=...",
-					"error",
-				);
-				return;
-			}
-			try {
-				await joplinApi("GET", "/ping");
-				ctx.ui.notify(`✅ Joplin connected — ${getBaseUrl()}`, "info");
-			} catch (err: any) {
-				ctx.ui.notify(`❌ ${err.message}`, "error");
-			}
+			const r = await checkConnection();
+			ctx.ui.notify(
+				r.ok ? `✅ ${r.message} — ${getBaseUrl()}` : `❌ ${r.message}`,
+				r.ok ? "info" : "error",
+			);
 		},
 	});
 }
